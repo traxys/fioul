@@ -177,7 +177,7 @@ fn time_of_day_attr(
 /// Tries to represent a single date, but as France uses daylight saving time
 /// dates between 2 and 3 in the morning on the day the clock moves back are ambiguous.
 /// This type contains either the single non-ambiguous date, or both possible dates.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DateTime {
     Single(chrono::DateTime<Utc>),
@@ -229,7 +229,7 @@ pub struct ParserBuilder {
 }
 
 /// Represents a time in the day, like 13:30. Works in 24 hours.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TimeOfDay {
     pub hour: u8,
@@ -237,7 +237,7 @@ pub struct TimeOfDay {
 }
 
 /// Represents an interval in the day, during which a [Station] is open.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OpenedHours {
     pub opening: TimeOfDay,
@@ -245,7 +245,7 @@ pub struct OpenedHours {
 }
 
 /// Represents the status of the [Station] on this particular day.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Hours {
     Closed,
@@ -253,7 +253,7 @@ pub enum Hours {
 }
 
 /// Represents the opening times of the [Station] during the week.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Schedule {
     /// Does the station have an automated booth for 24/24 service
@@ -263,7 +263,7 @@ pub struct Schedule {
 }
 
 /// Kinds of fuels available in the [Station]
-#[derive(Enum, Debug)]
+#[derive(Enum, Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Fuel {
     Diesel,
@@ -304,7 +304,7 @@ pub enum DateFormat {
 }
 
 /// Represent the price of a [Fuel] at a particular point in time
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Price {
     pub updated_at: DateTime,
@@ -312,7 +312,7 @@ pub struct Price {
 }
 
 /// Represent a shortage of a [Fuel] at a particular point in time. Can be ongoing.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Shortage {
     pub start: DateTime,
@@ -320,7 +320,7 @@ pub struct Shortage {
 }
 
 /// Represent a interval in time in which a [Station] was closed. Can be ongoing.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Closing {
     pub temporary: bool,
@@ -330,7 +330,7 @@ pub struct Closing {
 
 /// Represents physical coordinates, in `PTV_GEODECIMAL`. To obtain `WGS84` coordinates they must
 /// be divided by 100000.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Coordinates {
     pub latitude: f64,
@@ -338,7 +338,7 @@ pub struct Coordinates {
 }
 
 /// Kind of road a [Station] is attached to
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RoadKind {
     Highway,
@@ -347,7 +347,7 @@ pub enum RoadKind {
 }
 
 /// Physical location of a [Station]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Location {
     pub road: RoadKind,
@@ -358,7 +358,7 @@ pub struct Location {
 }
 
 /// Represents all the information on a single gas station
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Station {
     pub id: String,
