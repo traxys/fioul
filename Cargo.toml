@@ -1,0 +1,6 @@
+[workspace]
+members = ["fioul"]
+resolver = "2"
+
+[profile.test]
+opt-level = 2
