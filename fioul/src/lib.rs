@@ -30,7 +30,7 @@ use zip::{result::ZipError, ZipArchive};
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("error while fetching data")]
-    Network(#[from] Box<ureq::Error>),
+    Network(#[from] reqwest::Error),
     #[error("error while reading data")]
     IO(#[from] std::io::Error),
     #[error("error while reading data from archive")]
@@ -713,53 +713,55 @@ impl Parser {
         self.with_reader_format_hint(data, date_format)
     }
 
-    fn fetch(&self, url: &str, date_format: Option<DateFormat>) -> Parsed {
-        let mut reader = ureq::get(url).call().map_err(Box::new)?.into_reader();
+    async fn fetch(&self, url: &str, date_format: Option<DateFormat>) -> Parsed {
+        let body = reqwest::get(url).await?.bytes().await?;
 
-        let mut archive = Vec::new();
-        reader.read_to_end(&mut archive)?;
-
-        self.with_archive(ZipArchive::new(Cursor::new(archive))?, date_format)
+        self.with_archive(ZipArchive::new(Cursor::new(body))?, date_format)
     }
 
     /// Fetch the instantaneous feed of data (-10 minutes).
-    pub fn fetch_instant(&self) -> Parsed {
+    pub async fn fetch_instant(&self) -> Parsed {
         self.fetch(
             "https://donnees.roulez-eco.fr/opendata/instantane",
             Some(DateFormat::Spaced),
         )
+        .await
     }
 
     /// Fetch the daily feed of data (updated at 05:00).
-    pub fn fetch_daily(&self) -> Parsed {
+    pub async fn fetch_daily(&self) -> Parsed {
         self.fetch(
             "https://donnees.roulez-eco.fr/opendata/jour",
             Some(DateFormat::TSeparated),
         )
+        .await
     }
 
     /// Fetch the data for the current year.
-    pub fn fetch_yearly(&self) -> Parsed {
+    pub async fn fetch_yearly(&self) -> Parsed {
         self.fetch(
             "https://donnees.roulez-eco.fr/opendata/annee",
             Some(DateFormat::TSeparated),
         )
+        .await
     }
 
     /// Fetch the data for an archived year, only goes back to 2007.
-    pub fn fetch_archived_year(&self, year: u16) -> Parsed {
+    pub async fn fetch_archived_year(&self, year: u16) -> Parsed {
         self.fetch(
             &format!("https://donnees.roulez-eco.fr/opendata/annee/{year}"),
             Some(DateFormat::TSeparated),
         )
+        .await
     }
 
     /// Fetch the data for a single archived day. Only the last 30 days are available.
-    pub fn fetch_archived_day(&self, year: u16, month: u8, day: u8) -> Parsed {
+    pub async fn fetch_archived_day(&self, year: u16, month: u8, day: u8) -> Parsed {
         self.fetch(
             &format!("https://donnees.roulez-eco.fr/opendata/jour/{year}{month:2}{day:2}"),
             Some(DateFormat::TSeparated),
         )
+        .await
     }
 
     /// Directly open a zip file. [DateFormat::TSeparated] is assumed.
@@ -870,55 +872,58 @@ mod test {
         recv.recv().expect("limiter died")
     }
 
-    #[test]
-    fn fetch_instant() {
+    #[test(tokio::test)]
+    async fn fetch_instant() {
         get_token();
 
-        if let Err(e) = Parser::new().fetch_instant() {
+        if let Err(e) = Parser::new().fetch_instant().await {
             panic!("Error: {e:#?}")
         }
     }
 
-    #[test]
-    fn fetch_daily() {
+    #[test(tokio::test)]
+    async fn fetch_daily() {
         get_token();
 
-        if let Err(e) = Parser::new().fetch_daily() {
+        if let Err(e) = Parser::new().fetch_daily().await {
             panic!("Error: {e:#?}")
         }
     }
 
-    #[test]
-    fn fetch_archived_year() {
+    #[test(tokio::test)]
+    async fn fetch_archived_year() {
         get_token();
 
-        if let Err(e) = Parser::new().fetch_archived_year(2020) {
+        if let Err(e) = Parser::new().fetch_archived_year(2020).await {
             panic!("Error: {e:#?}")
         }
     }
 
-    #[test]
-    fn fetch_archived_day() {
+    #[test(tokio::test)]
+    async fn fetch_archived_day() {
         get_token();
 
         let current_date = chrono::Utc::now();
         let archive_date = current_date - chrono::Days::new(10);
 
-        if let Err(e) = Parser::new().fetch_archived_day(
-            archive_date.year() as u16,
-            archive_date.month() as u8,
-            archive_date.day() as u8,
-        ) {
+        if let Err(e) = Parser::new()
+            .fetch_archived_day(
+                archive_date.year() as u16,
+                archive_date.month() as u8,
+                archive_date.day() as u8,
+            )
+            .await
+        {
             panic!("Error: {e:#?}")
         }
     }
 
-    #[test]
+    #[test(tokio::test)]
     #[ignore]
-    fn fetch_yearly() {
+    async fn fetch_yearly() {
         get_token();
 
-        if let Err(e) = Parser::new().fetch_yearly() {
+        if let Err(e) = Parser::new().fetch_yearly().await {
             panic!("Error: {e:#?}")
         }
     }
