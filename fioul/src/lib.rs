@@ -731,6 +731,8 @@ impl Parser {
     }
 
     async fn fetch(&self, url: &str, date_format: Option<DateFormat>) -> Parsed {
+        log::debug!("fetching data at {url}");
+
         let body = reqwest::get(url).await?.bytes().await?;
 
         if body.starts_with(b"<!DOCTYPE html>") {
