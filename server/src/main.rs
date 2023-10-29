@@ -14,6 +14,7 @@ use axum::{
     Json, Router,
 };
 use fioul::{Coordinates, Station};
+use fioul_types::{Response, Stations};
 use fnv::FnvHashSet;
 use geo::{GeodesicDistance, Point};
 use itertools::Itertools;
@@ -90,28 +91,11 @@ enum ResponseKind {
     Ok,
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "status")]
-#[serde(rename_all = "snake_case")]
-enum Response<T> {
-    Error { code: u64, message: String },
-    Ok(T),
-}
-
 struct OkResponse<T>(T);
 
 impl<T> From<T> for OkResponse<T> {
     fn from(value: T) -> Self {
         Self(value)
-    }
-}
-
-impl<T> IntoResponse for Response<T>
-where
-    T: Serialize,
-{
-    fn into_response(self) -> axum::response::Response {
-        Json(self).into_response()
     }
 }
 
@@ -121,10 +105,10 @@ impl IntoResponse for Error {
 
         (
             status,
-            Response::<()>::Error {
+            Json(Response::<()>::Error {
                 code,
                 message: self.to_string(),
-            },
+            }),
         )
             .into_response()
     }
@@ -135,7 +119,7 @@ where
     T: Serialize,
 {
     fn into_response(self) -> axum::response::Response {
-        Response::Ok(self.0).into_response()
+        Json(Response::Ok(self.0)).into_response()
     }
 }
 
@@ -257,11 +241,6 @@ struct QueryParams {
     location_keep_unknown: bool,
     #[serde(default, deserialize_with = "comma_array")]
     ids: FnvHashSet<u64>,
-}
-
-#[derive(Serialize)]
-struct Stations {
-    stations: Vec<Station>,
 }
 
 async fn stations(

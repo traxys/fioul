@@ -489,6 +489,7 @@ dependencies = [
  "axum",
  "envious",
  "fioul",
+ "fioul-types",
  "fnv",
  "geo",
  "itertools",
@@ -498,6 +499,14 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "fioul-types"
+version = "0.1.0"
+dependencies = [
+ "fioul",
+ "serde",
 ]
 
 [[package]]

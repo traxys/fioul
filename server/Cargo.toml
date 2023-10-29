@@ -9,6 +9,7 @@ edition = "2021"
 axum = "0.6.20"
 envious = "0.2.2"
 fioul = { version = "0.1.0", path = "../fioul", features = ["serde"] }
+fioul-types = { version = "0.1.0", path = "../types" }
 fnv = "1.0.7"
 geo = "0.26.0"
 itertools = "0.11.0"
