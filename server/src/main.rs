@@ -240,6 +240,7 @@ impl Entry {
             Entry::Data(d) => Some(Ok(d)),
             Entry::NotFound(d) => {
                 if d.elapsed() > not_found_timeout {
+                    tracing::debug!("Error expired, re-fetching");
                     None
                 } else {
                     Some(Err(Error::NotFound))
@@ -286,6 +287,7 @@ impl QueryCacheInner {
 const RATE_LIMIT: Duration = Duration::from_millis(500);
 
 impl QueryCache {
+    #[tracing::instrument(skip(self))]
     async fn get_data(&self, source: PreciseSource) -> Result<Vec<Station>, Error> {
         let duration = match source {
             PreciseSource::Instant => self.instant_duration,
@@ -297,7 +299,11 @@ impl QueryCache {
         match handle.read(source, self.not_found_timeout) {
             Some(Ok(d)) if d.constructed.elapsed() < duration => Ok(d.data.clone()),
             Some(Err(e)) => Err(e),
-            _ => {
+            d => {
+                if d.is_some() {
+                    tracing::debug!("data expired, re-fetching")
+                }
+
                 drop(handle);
 
                 // We could have been slower than someone else when taking the write lock, so we
@@ -328,7 +334,6 @@ impl QueryCache {
         }
     }
 
-    #[tracing::instrument(skip(self))]
     async fn fetch_data(&self, source: PreciseSource) -> Result<Option<Vec<Station>>, Error> {
         let parser = self.get_token().await;
 
