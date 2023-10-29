@@ -489,6 +489,7 @@ dependencies = [
  "axum",
  "envious",
  "fioul",
+ "fnv",
  "geo",
  "itertools",
  "serde",

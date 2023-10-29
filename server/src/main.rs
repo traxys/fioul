@@ -14,6 +14,7 @@ use axum::{
     Json, Router,
 };
 use fioul::{Coordinates, Station};
+use fnv::FnvHashSet;
 use geo::{GeodesicDistance, Point};
 use itertools::Itertools;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -218,6 +219,32 @@ impl<'de> Deserialize<'de> for LocationQuery {
     }
 }
 
+fn comma_array<'de, D>(deserializer: D) -> Result<FnvHashSet<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct Visitor;
+    impl<'de> serde::de::Visitor<'de> for Visitor {
+        type Value = FnvHashSet<u64>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("comma separated list of integers")
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            v.split(',')
+                .map(str::parse)
+                .map(|r| r.map_err(E::custom))
+                .collect()
+        }
+    }
+
+    deserializer.deserialize_str(Visitor)
+}
+
 #[derive(Deserialize, Debug)]
 struct QueryParams {
     #[serde(default)]
@@ -228,6 +255,8 @@ struct QueryParams {
     location: Option<LocationQuery>,
     #[serde(default)]
     location_keep_unknown: bool,
+    #[serde(default, deserialize_with = "comma_array")]
+    ids: FnvHashSet<u64>,
 }
 
 #[derive(Serialize)]
@@ -242,6 +271,10 @@ async fn stations(
     let source = PreciseSource::from_source(params.source, params.year, params.month, params.day)?;
 
     let mut stations = state.data.get_data(source).await?;
+
+    if !params.ids.is_empty() {
+        stations.retain(|station| params.ids.contains(&station.id))
+    }
 
     if let Some(location) = params.location {
         tracing::debug!("filtering with location: {location:?}");
