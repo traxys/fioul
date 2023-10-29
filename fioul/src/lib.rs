@@ -356,7 +356,7 @@ pub struct Location {
     pub road: RoadKind,
     pub zip_code: String,
     pub address: String,
-    pub city: String,
+    pub city: Option<String>,
     pub coordinates: Option<Coordinates>,
 }
 
@@ -586,7 +586,7 @@ impl Parser {
         })??;
 
         Ok(Location {
-            city: unwrap(city, "ville")?,
+            city,
             address: unwrap(address, "adresse")?,
             zip_code: attribute(node, "cp", path)?,
             coordinates,
@@ -650,7 +650,13 @@ impl Parser {
             for child in station.children().filter(|n| n.is_element()) {
                 match child.tag_name().name() {
                     "adresse" => address = Some(value(child, || path() + ".adresse")?),
-                    "ville" => city = Some(value(child, || path() + ".ville")?),
+                    "ville" => {
+                        city = match value(child, || path() + ".ville") {
+                            Ok(v) => Some(v),
+                            Err(Error::MissingValue(_)) => None,
+                            Err(e) => return Err(e),
+                        }
+                    }
                     "horaires" => {
                         schedule = Some(self.parse_schedule(child, || path() + ".horaires")?)
                     }
@@ -993,6 +999,18 @@ mod test {
     #[test]
     fn year_2023() {
         let document = include_bytes!("../../data/PrixCarburants_annuel_2023.xml");
+
+        if let Err(e) =
+            Parser::new().with_reader_format_hint(&document[..], Some(DateFormat::TSeparated))
+        {
+            panic!("Error: {e:#?}");
+        }
+    }
+
+    // Missing a 'ville'
+    #[test]
+    fn year_2018() {
+        let document = include_bytes!("../../data/PrixCarburants_annuel_2018.xml");
 
         if let Err(e) =
             Parser::new().with_reader_format_hint(&document[..], Some(DateFormat::TSeparated))
