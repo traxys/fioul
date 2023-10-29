@@ -353,6 +353,7 @@ dependencies = [
 name = "fioul"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "chrono",
  "chrono-tz",
  "encoding_rs",

@@ -20,6 +20,7 @@ use std::{
     path::Path,
 };
 
+use aho_corasick::AhoCorasick;
 use chrono::{LocalResult, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Europe::Paris;
 use encoding_rs_io::DecodeReaderBytesBuilder;
@@ -86,6 +87,8 @@ pub enum Error {
     InvalidClosingType(String),
     #[error("invalid road kind at {0}")]
     InvalidRoadKind(String),
+    #[error("file was not found")]
+    NotFound,
 }
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -730,6 +733,20 @@ impl Parser {
     async fn fetch(&self, url: &str, date_format: Option<DateFormat>) -> Parsed {
         let body = reqwest::get(url).await?.bytes().await?;
 
+        if body.starts_with(b"<!DOCTYPE html>") {
+            let patterns = &[
+                "Le fichier à cette date n’existe plus.".as_bytes(),
+                "Les données à cette date ne sont pas disponible.".as_bytes(),
+            ];
+
+            let ac = AhoCorasick::new(patterns).unwrap();
+            if ac.find(&body).is_some() {
+                return Err(Error::NotFound);
+            } else {
+                panic!("Unexpected body: {:?}", std::str::from_utf8(&body));
+            }
+        }
+
         self.with_archive(ZipArchive::new(Cursor::new(body))?, date_format)
     }
 
@@ -991,5 +1008,25 @@ mod test {
         {
             panic!("Error: {e:#?}");
         }
+    }
+
+    #[test(tokio::test)]
+    async fn year_too_old() {
+        get_token();
+
+        assert!(matches!(
+            Parser::new().fetch_archived_year(2006).await,
+            Err(Error::NotFound)
+        ));
+    }
+
+    #[test(tokio::test)]
+    async fn daily_too_old() {
+        get_token();
+
+        assert!(matches!(
+            Parser::new().fetch_archived_day(2020, 10, 10).await,
+            Err(Error::NotFound)
+        ));
     }
 }
