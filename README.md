@@ -4,7 +4,7 @@ Fioul is a set of programs to interact with French gas station informations.
 The dataset is provided [by the government](https://www.prix-carburants.gouv.fr/rubrique/opendata/), as an XML file.
 
 This repository contains a library ([fioul](./fioul)) to fetch and/or parse the data into memory.
-It also provides a server ([fioul-server](./fioul-server)) to provide the data in an easier format.
+It also provides a server ([fioul-server](./server)) to provide the data in an easier format.
 
 ## Server
 
