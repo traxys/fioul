@@ -13,7 +13,9 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use fioul::Station;
+use fioul::{Coordinates, Station};
+use geo::{GeodesicDistance, Point};
+use itertools::Itertools;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::sync::{
     mpsc::{self, UnboundedSender},
@@ -173,6 +175,49 @@ impl PreciseSource {
     }
 }
 
+#[derive(Debug)]
+struct LocationQuery {
+    latitude: f64,
+    longitude: f64,
+    distance: f64,
+}
+
+impl<'de> Deserialize<'de> for LocationQuery {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = LocationQuery;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter
+                    .write_str("location query must be of the form latitude,longitude,distance")
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                let Some((latitude, longitude, distance)) = v.split(',').collect_tuple() else {
+                    return Err(E::custom(
+                        "need three comma separated fields for location query",
+                    ));
+                };
+
+                Ok(LocationQuery {
+                    latitude: latitude.parse().map_err(E::custom)?,
+                    longitude: longitude.parse().map_err(E::custom)?,
+                    distance: distance.parse().map_err(E::custom)?,
+                })
+            }
+        }
+
+        deserializer.deserialize_str(Visitor)
+    }
+}
+
 #[derive(Deserialize, Debug)]
 struct QueryParams {
     #[serde(default)]
@@ -180,6 +225,9 @@ struct QueryParams {
     year: Option<u16>,
     month: Option<u8>,
     day: Option<u8>,
+    location: Option<LocationQuery>,
+    #[serde(default)]
+    location_keep_unknown: bool,
 }
 
 #[derive(Serialize)]
@@ -193,7 +241,23 @@ async fn stations(
 ) -> Result<OkResponse<Stations>, Error> {
     let source = PreciseSource::from_source(params.source, params.year, params.month, params.day)?;
 
-    let stations = state.data.get_data(source).await?;
+    let mut stations = state.data.get_data(source).await?;
+
+    if let Some(location) = params.location {
+        tracing::debug!("filtering with location: {location:?}");
+        let requested_point = Point::new(location.latitude, location.longitude);
+        stations.retain(|station| match station.location.coordinates {
+            None => params.location_keep_unknown,
+            Some(Coordinates {
+                latitude,
+                longitude,
+            }) => {
+                requested_point
+                    .geodesic_distance(&Point::new(latitude / 100000., longitude / 100000.))
+                    <= location.distance
+            }
+        });
+    }
 
     Ok(Stations { stations }.into())
 }
