@@ -364,7 +364,7 @@ pub struct Location {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Station {
-    pub id: String,
+    pub id: u64,
     pub location: Location,
     pub prices: EnumMap<Fuel, Vec<Price>>,
     pub shortages: EnumMap<Fuel, Vec<Shortage>>,
@@ -712,7 +712,7 @@ impl Parser {
             }
 
             stations.push(Station {
-                id: attribute(station, "id", path)?,
+                id: int_attr(station, "id", path)? as u64,
                 location: self.parse_location(station, path, city, address)?,
                 prices,
                 shortages,
