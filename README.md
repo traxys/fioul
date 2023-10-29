@@ -10,6 +10,10 @@ It also provides a server ([fioul-server](./fioul-server)) to provide the data i
 
 The server provides a single HTTP route that returns data as a JSON document: `/api/stations`
 
+The server caches the government data, only fetching it once every 5 minutes for instantaneous data and once every 30 minutes for all other sources.
+
+It also caches failure to get the data for 1 hour.
+
 The response is of the form:
 
 ```json
