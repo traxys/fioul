@@ -187,6 +187,15 @@ pub enum DateTime {
     Ambiguous(chrono::DateTime<Utc>, chrono::DateTime<Utc>),
 }
 
+impl std::fmt::Display for DateTime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DateTime::Single(d) => write!(f, "{d}"),
+            DateTime::Ambiguous(a, b) => write!(f, "{a} or {b}"),
+        }
+    }
+}
+
 fn parse_date(v: &str, format: DateFormat, path: impl Fn() -> String) -> Result<DateTime> {
     let fmt_str = format!(
         "%F{}%T",
@@ -275,6 +284,23 @@ pub enum Fuel {
     GasolineE10,
     LPG,
     GasolineE85,
+}
+
+impl std::fmt::Display for Fuel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Fuel::Diesel => "diesel",
+                Fuel::Gasoline95Octane => "95",
+                Fuel::Gasoline98Octane => "98",
+                Fuel::GasolineE10 => "E10",
+                Fuel::LPG => "LPG",
+                Fuel::GasolineE85 => "E85",
+            }
+        )
+    }
 }
 
 impl Fuel {
