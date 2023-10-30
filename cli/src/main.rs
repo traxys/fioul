@@ -15,6 +15,7 @@ use fioul_types::{
     fioul::{self, Fuel, Price, Station},
     Stations,
 };
+use geo::{GeodesicDistance, Point};
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_DISTANCE: f64 = 5.0;
@@ -22,6 +23,7 @@ const DEFAULT_DISTANCE: f64 = 5.0;
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum SortCriteria {
     Price,
+    Distance,
 }
 
 #[derive(clap::Parser, Debug)]
@@ -208,6 +210,7 @@ fn print_stations(stations: &[Station], config: &Config) {
 
 enum Sort {
     None,
+    Distance(Point),
     Price(Fuel),
 }
 
@@ -239,6 +242,21 @@ impl Sort {
                     }
                 });
             }
+            Sort::Distance(from) => stations.sort_unstable_by(|a, b| {
+                match (a.location.coordinates, b.location.coordinates) {
+                    (None, None) => Ordering::Equal,
+                    (Some(_), None) => Ordering::Less,
+                    (None, Some(_)) => Ordering::Greater,
+                    (Some(a), Some(b)) => {
+                        let a = Point::new(a.latitude / 100000., a.longitude / 100000.)
+                            .geodesic_distance(from);
+                        let b = Point::new(b.latitude / 100000., b.longitude / 100000.)
+                            .geodesic_distance(from);
+
+                        a.partial_cmp(&b).expect("distances should be numbers")
+                    }
+                }
+            }),
         }
     }
 }
@@ -316,6 +334,13 @@ fn main() -> color_eyre::Result<()> {
                     "A fuel type must be specified to be able to sort by price"
                 ))?;
             Sort::Price(fuel_sort)
+        }
+        Some(SortCriteria::Distance) => {
+            let location = config.default_location.ok_or(
+                color_eyre::eyre::eyre!(
+                    "Can only sort with distance when 'default_location' is filled in the configuration'"
+                ))?;
+            Sort::Distance(Point::new(location.latitude, location.longitude))
         }
         None => Sort::None,
     };

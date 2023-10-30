@@ -648,6 +648,7 @@ dependencies = [
  "color-eyre",
  "directories",
  "fioul-types",
+ "geo",
  "serde",
  "toml",
  "ureq",
