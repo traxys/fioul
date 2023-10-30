@@ -1,5 +1,6 @@
 use std::{
     cmp::Ordering,
+    collections::HashMap,
     fs::{File, OpenOptions},
     io::Read,
     str::FromStr,
@@ -16,6 +17,7 @@ use fioul_types::{
     Stations,
 };
 use geo::{GeodesicDistance, Point};
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_DISTANCE: f64 = 5.0;
@@ -85,13 +87,14 @@ impl FromStr for Location {
 #[derive(Subcommand, Debug)]
 enum Command {
     Near(Near),
+    Profile(DoProfile),
 }
 
 fn mk_true() -> bool {
     true
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct DisplayConfig {
     #[serde(default = "mk_true")]
     dates: bool,
@@ -108,12 +111,25 @@ impl Default for DisplayConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 struct SortConfig {
     fuel: Option<Fuel>,
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Debug)]
+struct StationInfo {
+    name: String,
+    id: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Profile {
+    #[serde(default)]
+    fuels: Vec<fioul::Fuel>,
+    stations: Vec<StationInfo>,
+}
+
+#[derive(Serialize, Deserialize, Default, Debug)]
 struct Config {
     default_server: Option<String>,
     default_location: Option<Location>,
@@ -122,6 +138,8 @@ struct Config {
     display: DisplayConfig,
     #[serde(default)]
     sort: SortConfig,
+    #[serde(default)]
+    profiles: HashMap<String, Profile>,
 }
 
 #[derive(clap::Args, Debug)]
@@ -175,6 +193,14 @@ where
     }
 }
 
+fn display_fuel(fuel: fioul::Fuel, price: &Price, display_dates: bool) {
+    print!("  - {fuel}: {}", price.price);
+    if display_dates {
+        print!(" (at {})", price.updated_at);
+    }
+    println!()
+}
+
 fn print_stations(stations: &[Station], config: &Config) {
     for station in stations {
         println!(
@@ -183,25 +209,20 @@ fn print_stations(stations: &[Station], config: &Config) {
             station.location.address,
             station.location.zip_code,
         );
+        println!("ID: {}", station.id);
         println!("Prices:");
-
-        let display_fuel = |fuel, price: &Price| {
-            print!("  - {fuel}: {}", price.price);
-            if config.display.dates {
-                print!(" (at {})", price.updated_at);
-            }
-            println!()
-        };
 
         if config.display.fuels.is_empty() {
             for (fuel, price) in &station.prices {
-                price.iter().for_each(|p| display_fuel(fuel, p))
+                price
+                    .iter()
+                    .for_each(|p| display_fuel(fuel, p, config.display.dates))
             }
         } else {
             for &fuel in &config.display.fuels {
                 station.prices[fuel]
                     .iter()
-                    .for_each(|p| display_fuel(fuel, p))
+                    .for_each(|p| display_fuel(fuel, p, config.display.dates))
             }
         }
         println!()
@@ -288,6 +309,57 @@ impl Near {
     }
 }
 
+#[derive(clap::Args, Debug)]
+struct DoProfile {
+    #[arg(help = "profile to load")]
+    profile: String,
+}
+
+impl DoProfile {
+    fn main(&self, url: &str, sort: &Sort, config: &Config) -> color_eyre::Result<()> {
+        let profile = config
+            .profiles
+            .get(&self.profile)
+            .ok_or(color_eyre::eyre::eyre!(
+                "No such profile in the configuration"
+            ))?;
+
+        let mut stations = get_stations(
+            url,
+            [(
+                "ids",
+                profile
+                    .stations
+                    .iter()
+                    .map(|s| s.id.to_string())
+                    .join(",")
+                    .as_str(),
+            )],
+        )?;
+
+        sort.sort(&mut stations);
+
+        for station in stations {
+            let name = &profile
+                .stations
+                .iter()
+                .find(|s| s.id == station.id)
+                .expect("returned station was not asked")
+                .name;
+
+            println!("== {name}");
+            for &fuel in &profile.fuels {
+                station.prices[fuel]
+                    .iter()
+                    .for_each(|p| display_fuel(fuel, p, config.display.dates))
+            }
+            println!()
+        }
+
+        Ok(())
+    }
+}
+
 fn config_file(project: &ProjectDirs) -> color_eyre::Result<File> {
     OpenOptions::new()
         .create(true)
@@ -347,5 +419,6 @@ fn main() -> color_eyre::Result<()> {
 
     match args.command {
         Command::Near(n) => n.main(&url, &sort, &config),
+        Command::Profile(p) => p.main(&url, &sort, &config),
     }
 }

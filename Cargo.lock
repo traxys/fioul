@@ -649,6 +649,7 @@ dependencies = [
  "directories",
  "fioul-types",
  "geo",
+ "itertools",
  "serde",
  "toml",
  "ureq",
