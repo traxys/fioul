@@ -1,5 +1,5 @@
 [workspace]
-members = ["fioul", "server", "types"]
+members = ["fioul", "server", "types", "cli"]
 resolver = "2"
 
 [profile.test]
