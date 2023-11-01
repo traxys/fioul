@@ -29,6 +29,22 @@
         RUST_DOC_PATH = "${rust}/share/doc/rust/html/std/index.html";
       };
 
-      defaultPackage = naersk'.buildPackage ./.;
+      packages = rec {
+        fioul = naersk'.buildPackage {
+          name = "fioul";
+          inherit ((pkgs.lib.importTOML ./cli/Cargo.toml).package) version;
+          src = ./.;
+
+          cargoBuildOptions = opts: opts ++ ["--package fioul-cli"];
+        };
+        fioul-server = naersk'.buildPackage {
+          name = "fioul-server";
+          inherit ((pkgs.lib.importTOML ./server/Cargo.toml).package) version;
+          src = ./.;
+
+          cargoBuildOptions = opts: opts ++ ["--package fioul-server"];
+        };
+        default = fioul;
+      };
     });
 }
