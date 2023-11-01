@@ -3,6 +3,8 @@ use std::{
     collections::HashMap,
     fs::{File, OpenOptions},
     io::Read,
+    num::NonZeroUsize,
+    path::{Path, PathBuf},
     str::FromStr,
 };
 
@@ -18,9 +20,139 @@ use fioul_types::{
 };
 use geo::{GeodesicDistance, Point};
 use itertools::Itertools;
+use lru::LruCache;
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_DISTANCE: f64 = 5.0;
+
+const CACHE_VERSION: u64 = 0;
+const LRU_CAPACITY: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(1024) };
+
+#[derive(Serialize, Deserialize)]
+struct GeoInfo {
+    display_name: String,
+}
+
+struct GeoCache {
+    path: Option<PathBuf>,
+    nominatim: Option<String>,
+    cache: LruCache<u64, GeoInfo>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct OnDiskCache {
+    version: u64,
+    info: Vec<(u64, GeoInfo)>,
+}
+
+#[derive(Deserialize)]
+struct OsmInfo {
+    display_name: String,
+}
+
+fn opt_tr<T, U>(a: Option<T>, b: Option<U>) -> Option<(T, U)> {
+    Some((a?, b?))
+}
+
+impl GeoCache {
+    fn get(&mut self, station: &Station) -> color_eyre::Result<Option<&GeoInfo>> {
+        opt_tr(self.nominatim.as_ref(), station.location.coordinates)
+            .map(|(url, coords)| {
+                self.cache.try_get_or_insert(station.id, || {
+                    let response = ureq::get(&format!("{url}/reverse"))
+                        .query("format", "json")
+                        .query("lat", &(coords.latitude / 100000.).to_string())
+                        .query("lon", &(coords.longitude / 100000.).to_string())
+                        .call()?
+                        .into_string()?;
+
+                    let response: OsmInfo = match serde_json::from_str(&response) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!("Response was:\n{response}");
+                            return Err(e).wrap_err("could not get osm information");
+                        }
+                    };
+
+                    Ok(GeoInfo {
+                        display_name: response.display_name,
+                    })
+                })
+            })
+            .transpose()
+    }
+
+    fn non_backed(nominatim: Option<String>) -> Self {
+        Self {
+            nominatim,
+            path: None,
+            cache: LruCache::new(LRU_CAPACITY),
+        }
+    }
+
+    fn empty(from: &Path, nominatim: Option<String>) -> Self {
+        Self {
+            nominatim,
+            path: Some(from.into()),
+            cache: LruCache::new(LRU_CAPACITY),
+        }
+    }
+
+    fn load(from: &Path, nominatim: Option<String>) -> color_eyre::Result<Self> {
+        let data: ciborium::Value = ciborium::from_reader(File::open(from)?)?;
+        let map = data
+            .as_map()
+            .ok_or(color_eyre::eyre::eyre!("Data is not a map"))?;
+        let (_, version) = map
+            .iter()
+            .find(|(k, _)| k == &ciborium::Value::Text("version".into()))
+            .ok_or(color_eyre::eyre::eyre!("Version is not present"))?;
+        let version: u64 = version
+            .clone()
+            .into_integer()
+            .map_err(|_| color_eyre::eyre::eyre!("version is not an integer"))?
+            .try_into()?;
+
+        color_eyre::eyre::ensure!(
+            version == CACHE_VERSION,
+            "Cache at {from:?} is using version {version}, while version {CACHE_VERSION} was expected."
+        );
+
+        let data: OnDiskCache = data.deserialized()?;
+
+        let mut cache = LruCache::new(LRU_CAPACITY);
+
+        for (id, info) in data.info.into_iter().rev() {
+            cache.put(id, info);
+        }
+
+        Ok(Self {
+            nominatim,
+            path: Some(from.into()),
+            cache,
+        })
+    }
+
+    fn store(self) -> color_eyre::Result<()> {
+        if let Some(p) = self.path {
+            let on_disk = OnDiskCache {
+                version: CACHE_VERSION,
+                info: self.cache.into_iter().collect(),
+            };
+
+            let file = OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .create(true)
+                .open(p)
+                .wrap_err("Could not create cache file")?;
+
+            ciborium::into_writer(&on_disk, file)?;
+        }
+
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum SortCriteria {
@@ -30,10 +162,18 @@ enum SortCriteria {
 
 #[derive(clap::Parser, Debug)]
 struct Args {
-    #[arg(short = 'u', long = "url", env = "FL_SERVER_URL")]
+    #[arg(short = 'u', long = "url", env = "FL_SERVER_URL", global = true)]
     server_url: Option<String>,
     #[arg(short, long, help = "Criteria to sort with", global = true)]
     sort: Option<SortCriteria>,
+    #[arg(
+        short = 'N',
+        long,
+        env = "FL_NOMINATIM_URL",
+        help = "URL to a nominatim server",
+        global = true
+    )]
+    nominatim: Option<String>,
     #[arg(
         short,
         long,
@@ -130,10 +270,17 @@ struct Profile {
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]
+struct DefaultValueConfig {
+    server: Option<String>,
+    location: Option<Location>,
+    distance: Option<f64>,
+    nominatim: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Default, Debug)]
 struct Config {
-    default_server: Option<String>,
-    default_location: Option<Location>,
-    default_distance: Option<f64>,
+    #[serde(default)]
+    default: DefaultValueConfig,
     #[serde(default)]
     display: DisplayConfig,
     #[serde(default)]
@@ -201,14 +348,25 @@ fn display_fuel(fuel: fioul::Fuel, price: &Price, display_dates: bool) {
     println!()
 }
 
-fn print_stations(stations: &[Station], config: &Config) {
+fn print_stations(
+    stations: &[Station],
+    config: &Config,
+    cache: &mut GeoCache,
+) -> color_eyre::Result<()> {
     for station in stations {
+        let geo_info = cache.get(station)?;
+
         println!(
             "== {} - {} ({})",
             station.location.city.as_deref().unwrap_or(""),
             station.location.address,
             station.location.zip_code,
         );
+        if let Some(info) = geo_info {
+            if let Some(name) = info.display_name.split(',').next() {
+                println!("Name: {name}");
+            }
+        }
         println!("ID: {}", station.id);
         println!("Prices:");
 
@@ -227,6 +385,8 @@ fn print_stations(stations: &[Station], config: &Config) {
         }
         println!()
     }
+
+    Ok(())
 }
 
 enum Sort {
@@ -283,14 +443,20 @@ impl Sort {
 }
 
 impl Near {
-    fn main(self, url: &str, sort: &Sort, config: &Config) -> color_eyre::Result<()> {
-        let Some(location) = self.location.or(config.default_location) else {
+    fn main(
+        self,
+        url: &str,
+        sort: &Sort,
+        config: &Config,
+        cache: &mut GeoCache,
+    ) -> color_eyre::Result<()> {
+        let Some(location) = self.location.or(config.default.location) else {
             color_eyre::eyre::bail!("No location provided")
         };
 
         let distance = self
             .distance
-            .or(config.default_distance)
+            .or(config.default.distance)
             .unwrap_or(DEFAULT_DISTANCE)
             * 1000.0;
 
@@ -304,8 +470,7 @@ impl Near {
 
         sort.sort(&mut stations);
 
-        print_stations(&stations, config);
-        Ok(())
+        print_stations(&stations, config, cache)
     }
 }
 
@@ -375,8 +540,8 @@ fn main() -> color_eyre::Result<()> {
 
     let project_dir = ProjectDirs::from("net", "traxys", "fioul");
 
-    let config = match &project_dir {
-        None => Config::default(),
+    let (config, mut cache) = match &project_dir {
+        None => (Config::default(), GeoCache::non_backed(args.nominatim)),
         Some(p) => {
             let config_path = p.config_dir();
             std::fs::create_dir_all(config_path).wrap_err("could not create config directory")?;
@@ -386,11 +551,23 @@ fn main() -> color_eyre::Result<()> {
             let mut config = String::new();
             config_file.read_to_string(&mut config)?;
 
-            toml::from_str(&config)?
+            let config: Config = toml::from_str(&config)?;
+
+            let nominatim = config.default.nominatim.clone().or(args.nominatim);
+
+            std::fs::create_dir_all(p.cache_dir()).wrap_err("could not create cache directory")?;
+
+            let cache_path = p.cache_dir().join("geo.cbor");
+            let cache = match cache_path.exists() {
+                true => GeoCache::load(&cache_path, nominatim)?,
+                false => GeoCache::empty(&cache_path, nominatim),
+            };
+
+            (config, cache)
         }
     };
 
-    let url = match args.server_url.or(config.default_server.clone()) {
+    let url = match args.server_url.or(config.default.server.clone()) {
         None => {
             color_eyre::eyre::bail!("No server was provided. Server can be provided either through the command line arguments or the config file.")
         }
@@ -408,17 +585,21 @@ fn main() -> color_eyre::Result<()> {
             Sort::Price(fuel_sort)
         }
         Some(SortCriteria::Distance) => {
-            let location = config.default_location.ok_or(
+            let location = config.default.location.ok_or(
                 color_eyre::eyre::eyre!(
-                    "Can only sort with distance when 'default_location' is filled in the configuration'"
+                    "Can only sort with distance when 'default.location' is filled in the configuration'"
                 ))?;
             Sort::Distance(Point::new(location.latitude, location.longitude))
         }
         None => Sort::None,
     };
 
-    match args.command {
-        Command::Near(n) => n.main(&url, &sort, &config),
+    let res = match args.command {
+        Command::Near(n) => n.main(&url, &sort, &config, &mut cache),
         Command::Profile(p) => p.main(&url, &sort, &config),
-    }
+    };
+
+    cache.store()?;
+
+    res
 }
