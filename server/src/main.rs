@@ -8,7 +8,7 @@ use std::{
 
 use axum::{
     extract::{rejection::QueryRejection, FromRequestParts, Query},
-    http::{request::Parts, StatusCode},
+    http::{request::Parts, Method, StatusCode},
     response::IntoResponse,
     routing::get,
     Json, Router,
@@ -23,7 +23,10 @@ use tokio::sync::{
     mpsc::{self, UnboundedSender},
     oneshot, RwLock,
 };
-use tower_http::trace::TraceLayer;
+use tower_http::{
+    cors::{Any, CorsLayer},
+    trace::TraceLayer,
+};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 type AppState = axum::extract::State<Arc<State>>;
@@ -579,11 +582,16 @@ async fn main() -> Result<(), String> {
 
     let state = Arc::new(State::new());
 
+    let cors = CorsLayer::new()
+        .allow_methods([Method::GET])
+        .allow_origin(Any);
+
     let app = Router::new()
         .route("/api/stations", get(stations))
         .route("/status", get(status))
         .with_state(state)
-        .layer(TraceLayer::new_for_http());
+        .layer(TraceLayer::new_for_http())
+        .layer(cors);
 
     tracing::info!("Listening on 0.0.0.0:{}", config.port);
 
