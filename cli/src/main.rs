@@ -627,15 +627,6 @@ impl DoProfile {
     }
 }
 
-fn config_file(project: &ProjectDirs) -> color_eyre::Result<File> {
-    OpenOptions::new()
-        .create(true)
-        .write(true)
-        .read(true)
-        .open(project.config_dir().join("config.toml"))
-        .wrap_err("could not open config file")
-}
-
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
     let args = Args::parse();
@@ -651,12 +642,16 @@ fn main() -> color_eyre::Result<()> {
             let config_path = p.config_dir();
             std::fs::create_dir_all(config_path).wrap_err("could not create config directory")?;
 
-            let mut config_file = config_file(p)?;
+            let config_path = config_path.join("config.toml");
+            let config: Config = if config_path.exists() {
+                let mut config_file = File::open(config_path)?;
+                let mut config = String::new();
+                config_file.read_to_string(&mut config)?;
 
-            let mut config = String::new();
-            config_file.read_to_string(&mut config)?;
-
-            let config: Config = toml::from_str(&config)?;
+                toml::from_str(&config)?
+            } else {
+                Config::default()
+            };
 
             let nominatim = config.default.nominatim.clone().or(args.nominatim);
             let duration = config
