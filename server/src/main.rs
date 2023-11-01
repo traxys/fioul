@@ -534,6 +534,10 @@ impl QueryCache {
     }
 }
 
+async fn status() -> StatusCode {
+    StatusCode::OK
+}
+
 struct State {
     data: Arc<QueryCache>,
 }
@@ -577,6 +581,7 @@ async fn main() -> Result<(), String> {
 
     let app = Router::new()
         .route("/api/stations", get(stations))
+        .route("/status", get(status))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 
