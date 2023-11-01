@@ -362,7 +362,31 @@ impl QueryCacheInner {
 
 const RATE_LIMIT: Duration = Duration::from_millis(500);
 
+fn retain_opt(o: &mut Option<DataEntry>, duration: Duration) {
+    match o {
+        Some(d) if d.constructed.elapsed() > duration => *o = None,
+        _ => (),
+    }
+}
+
+fn retain_map<K>(m: &mut HashMap<K, Entry>, duration: Duration) {
+    m.retain(|_, e| match e {
+        Entry::Data(d) => d.constructed.elapsed() < duration,
+        Entry::NotFound(c) => c.elapsed() < duration,
+    });
+}
+
 impl QueryCache {
+    async fn clean(&self) {
+        let mut handle = self.data.write().await;
+
+        retain_opt(&mut handle.instant, self.instant_duration);
+        retain_opt(&mut handle.current_day, self.cache_duration);
+        retain_opt(&mut handle.current_year, self.cache_duration);
+        retain_map(&mut handle.days, self.cache_duration);
+        retain_map(&mut handle.years, self.cache_duration);
+    }
+
     #[tracing::instrument(skip(self))]
     async fn get_data(&self, source: PreciseSource) -> Result<Vec<Station>, Error> {
         let duration = match source {
@@ -445,7 +469,7 @@ impl QueryCache {
         fioul::Parser::new()
     }
 
-    fn new() -> Self {
+    fn new() -> Arc<Self> {
         let (limiter, mut recv) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
 
         tokio::spawn(async move {
@@ -479,7 +503,7 @@ impl QueryCache {
             }
         });
 
-        Self {
+        let v = Arc::new(Self {
             data: QueryCacheInner {
                 years: HashMap::new(),
                 days: HashMap::new(),
@@ -493,12 +517,25 @@ impl QueryCache {
             instant_duration: Duration::from_secs(60 * 5),
             cache_duration: Duration::from_secs(60 * 30),
             not_found_timeout: Duration::from_secs(60 * 60),
-        }
+        });
+
+        let clone = Arc::clone(&v);
+
+        tokio::spawn(async move {
+            let mut timer = tokio::time::interval(Duration::from_secs(60 * 5));
+            loop {
+                timer.tick().await;
+
+                clone.clean().await;
+            }
+        });
+
+        v
     }
 }
 
 struct State {
-    data: QueryCache,
+    data: Arc<QueryCache>,
 }
 
 impl State {
