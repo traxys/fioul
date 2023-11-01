@@ -46,5 +46,6 @@
         };
         default = fioul;
       };
-    });
+    })
+    // {nixosModules.default = import ./nix/nixos.nix self;};
 }
