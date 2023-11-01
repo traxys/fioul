@@ -25,29 +25,51 @@ use serde::{Deserialize, Serialize};
 
 const DEFAULT_DISTANCE: f64 = 5.0;
 
-const CACHE_VERSION: u64 = 0;
+const CACHE_VERSION: u64 = 1;
 const LRU_CAPACITY: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(1024) };
 
 #[derive(Serialize, Deserialize)]
 struct GeoInfo {
     display_name: String,
+    lat: f64,
+    lon: f64,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Eq, Hash)]
+enum CacheKey {
+    Station(u64),
+    GeoLocation(String),
 }
 
 struct GeoCache {
     path: Option<PathBuf>,
     nominatim: Option<String>,
-    cache: LruCache<u64, GeoInfo>,
+    cache: LruCache<CacheKey, GeoInfo>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct OnDiskCache {
     version: u64,
-    info: Vec<(u64, GeoInfo)>,
+    info: Vec<(CacheKey, GeoInfo)>,
 }
 
 #[derive(Deserialize)]
 struct OsmInfo {
     display_name: String,
+    lat: String,
+    lon: String,
+}
+
+impl TryFrom<OsmInfo> for GeoInfo {
+    type Error = color_eyre::Report;
+
+    fn try_from(value: OsmInfo) -> Result<Self, Self::Error> {
+        Ok(Self {
+            display_name: value.display_name,
+            lat: value.lat.parse()?,
+            lon: value.lon.parse()?,
+        })
+    }
 }
 
 fn opt_tr<T, U>(a: Option<T>, b: Option<U>) -> Option<(T, U)> {
@@ -55,18 +77,45 @@ fn opt_tr<T, U>(a: Option<T>, b: Option<U>) -> Option<(T, U)> {
 }
 
 impl GeoCache {
-    fn get(&mut self, station: &Station) -> color_eyre::Result<Option<&GeoInfo>> {
+    fn get_station(&mut self, station: &Station) -> color_eyre::Result<Option<&GeoInfo>> {
         opt_tr(self.nominatim.as_ref(), station.location.coordinates)
             .map(|(url, coords)| {
-                self.cache.try_get_or_insert(station.id, || {
-                    let response = ureq::get(&format!("{url}/reverse"))
-                        .query("format", "json")
-                        .query("lat", &(coords.latitude / 100000.).to_string())
-                        .query("lon", &(coords.longitude / 100000.).to_string())
+                self.cache
+                    .try_get_or_insert(CacheKey::Station(station.id), || {
+                        let response = ureq::get(&format!("{url}/reverse"))
+                            .query("format", "json")
+                            .query("lat", &(coords.latitude / 100000.).to_string())
+                            .query("lon", &(coords.longitude / 100000.).to_string())
+                            .call()?
+                            .into_string()?;
+
+                        let response: OsmInfo = match serde_json::from_str(&response) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                eprintln!("Response was:\n{response}");
+                                return Err(e).wrap_err("could not get osm information");
+                            }
+                        };
+
+                        response.try_into()
+                    })
+            })
+            .transpose()
+    }
+
+    fn get_query(&mut self, query: &str) -> color_eyre::Result<&GeoInfo> {
+        match &self.nominatim {
+            Some(url) => self
+                .cache
+                .try_get_or_insert(CacheKey::GeoLocation(query.into()), || {
+                    let response = ureq::get(&format!("{url}/search"))
+                        .query("q", query)
+                        .query("limit", "1")
+                        .query("countrycodes", "fr")
                         .call()?
                         .into_string()?;
 
-                    let response: OsmInfo = match serde_json::from_str(&response) {
+                    let response: Vec<OsmInfo> = match serde_json::from_str(&response) {
                         Ok(v) => v,
                         Err(e) => {
                             eprintln!("Response was:\n{response}");
@@ -74,12 +123,15 @@ impl GeoCache {
                         }
                     };
 
-                    Ok(GeoInfo {
-                        display_name: response.display_name,
-                    })
-                })
-            })
-            .transpose()
+                    match response.into_iter().next() {
+                        None => color_eyre::eyre::bail!("Query '{query}' returned no results"),
+                        Some(v) => v.try_into(),
+                    }
+                }),
+            None => color_eyre::eyre::bail!(
+                "Nominatim URL must be provided when using queried locations"
+            ),
+        }
     }
 
     fn non_backed(nominatim: Option<String>) -> Self {
@@ -203,24 +255,45 @@ struct Args {
     command: Command,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-struct Location {
-    pub latitude: f64,
-    pub longitude: f64,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum Location {
+    Coords { latitude: f64, longitude: f64 },
+    Name(String),
 }
 
 impl FromStr for Location {
     type Err = color_eyre::Report;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let Some((latitude, longitude)) = s.split_once(',') else {
-            color_eyre::eyre::bail!("expected a location of the form <latitude>,<longitude>")
-        };
+        if let Some(query) = s.strip_prefix("q:") {
+            Ok(Self::Name(query.into()))
+        } else {
+            let Some((latitude, longitude)) = s.split_once(',') else {
+                color_eyre::eyre::bail!("expected a location of the form <latitude>,<longitude>")
+            };
 
-        Ok(Self {
-            latitude: latitude.parse()?,
-            longitude: longitude.parse()?,
-        })
+            Ok(Self::Coords {
+                latitude: latitude.parse()?,
+                longitude: longitude.parse()?,
+            })
+        }
+    }
+}
+
+impl Location {
+    fn to_coords(&self, cache: &mut GeoCache) -> color_eyre::Result<(f64, f64)> {
+        match self {
+            &Location::Coords {
+                latitude,
+                longitude,
+            } => Ok((latitude, longitude)),
+            Location::Name(query) => {
+                let info = cache.get_query(query)?;
+
+                Ok((info.lat, info.lon))
+            }
+        }
     }
 }
 
@@ -291,7 +364,7 @@ struct Config {
 
 #[derive(clap::Args, Debug)]
 struct Near {
-    #[arg(help = "Location of the form <latitude>,<longitude>.")]
+    #[arg(help = "Location of the form <latitude>,<longitude> or `q:<nominatim search query>`.")]
     location: Option<Location>,
     #[arg(
         short,
@@ -354,7 +427,7 @@ fn print_stations(
     cache: &mut GeoCache,
 ) -> color_eyre::Result<()> {
     for station in stations {
-        let geo_info = cache.get(station)?;
+        let geo_info = cache.get_station(station)?;
 
         println!(
             "== {} - {} ({})",
@@ -450,7 +523,13 @@ impl Near {
         config: &Config,
         cache: &mut GeoCache,
     ) -> color_eyre::Result<()> {
-        let Some(location) = self.location.or(config.default.location) else {
+        let Some((lat, lon)) = self
+            .location
+            .as_ref()
+            .or(config.default.location.as_ref())
+            .map(|l| l.to_coords(cache))
+            .transpose()?
+        else {
             color_eyre::eyre::bail!("No location provided")
         };
 
@@ -462,10 +541,7 @@ impl Near {
 
         let mut stations = get_stations(
             url,
-            [(
-                "location",
-                format!("{},{},{}", location.latitude, location.longitude, distance).as_str(),
-            )],
+            [("location", format!("{},{},{}", lat, lon, distance).as_str())],
         )?;
 
         sort.sort(&mut stations);
@@ -585,11 +661,12 @@ fn main() -> color_eyre::Result<()> {
             Sort::Price(fuel_sort)
         }
         Some(SortCriteria::Distance) => {
-            let location = config.default.location.ok_or(
+            let location = config.default.location.clone().ok_or(
                 color_eyre::eyre::eyre!(
                     "Can only sort with distance when 'default.location' is filled in the configuration'"
                 ))?;
-            Sort::Distance(Point::new(location.latitude, location.longitude))
+            let (lat, lon) = location.to_coords(&mut cache)?;
+            Sort::Distance(Point::new(lat, lon))
         }
         None => Sort::None,
     };
