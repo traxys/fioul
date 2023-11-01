@@ -546,12 +546,32 @@ impl State {
     }
 }
 
+fn port_default() -> u16 {
+    3000
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Config {
+    #[serde(default = "port_default")]
+    port: u16,
+}
+
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), String> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::from_default_env())
         .with(tracing_subscriber::fmt::layer())
         .init();
+
+    let config: Config = match envious::Config::default()
+        .with_prefix("FIOUL")
+        .build_from_env()
+    {
+        Ok(v) => v,
+        Err(e) => {
+            return Err(format!("Could not parse config: {e}"));
+        }
+    };
 
     let state = Arc::new(State::new());
 
@@ -560,9 +580,11 @@ async fn main() {
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 
-    let addr = SocketAddr::new("0.0.0.0".parse().unwrap(), 3000);
+    let addr = SocketAddr::new("0.0.0.0".parse().unwrap(), config.port);
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
         .await
         .unwrap();
+
+    Ok(())
 }
