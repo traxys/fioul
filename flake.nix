@@ -47,5 +47,8 @@
         default = fioul;
       };
     })
-    // {nixosModules.default = import ./nix/nixos.nix self;};
+    // {
+      nixosModules.default = import ./nix/nixos.nix self;
+      homeManagerModules.default = import ./nix/hm.nix self;
+    };
 }
