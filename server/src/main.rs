@@ -564,7 +564,7 @@ async fn main() -> Result<(), String> {
         .init();
 
     let config: Config = match envious::Config::default()
-        .with_prefix("FIOUL")
+        .with_prefix("FIOUL_")
         .build_from_env()
     {
         Ok(v) => v,
@@ -579,6 +579,8 @@ async fn main() -> Result<(), String> {
         .route("/api/stations", get(stations))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
+
+    tracing::info!("Listening on 0.0.0.0:{}", config.port);
 
     let addr = SocketAddr::new("0.0.0.0".parse().unwrap(), config.port);
     axum::Server::bind(&addr)
