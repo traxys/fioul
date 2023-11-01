@@ -1,0 +1,45 @@
+#
+# This is an example configuration, to be placed in ~/.config/fioul/config.toml (on linux)
+#
+
+# Section setting default parameters if they are not provided on the command line
+[default]
+# Url of the fioul server (can also be passed with -u/--url or FL_SERVER_URL)
+server = "http://localhost:3000"
+# Default location to use in `fioul near`
+location = { latitude = 48.8588897, longitude = 2.3200410217200766 }
+# Can also be specified as a nominatim query string
+# location = "paris, ile de france"
+# Distance in km to use in `fioul near` (can also be passed with -d/--distance)
+distance = 5.0
+# URL to a nominatim server. It is _not_ suggested to use upstream, because while caching is
+# performed by the CLI, to populate the cache a large number of queries will be performed
+nominatim = "https://localhost:8088"
+
+# Section to control what is displayed when showing gas stations
+[display]
+# Show the dates at which prices have been updated (default to true)
+dates = false
+# Array of fuels to display. Fuels are Diesel,Gasoline95Octane,Gasoline98Octane,GasolineE10,LPG,GasolineE85
+fuels = ["Diesel", "LPG"]
+
+# Section controlling how to sort stations when asked to
+[sort]
+# When using --sort price which price to sort with (can also be supplied with -f/--fuel)
+fuel = "Diesel"
+
+# Profiles are a group of stations & fuels that can be queried using `fioul profile <name>`
+[profile.marseille]
+# Same function as display.fuels
+fuels = ["Gasoline95Octane", "Gasoline98Octane"]
+
+# List of stations to include in the profile
+[[profiles.marseille.stations]]
+name = "Foo"
+# ID can be found with `fioul near` or from the direct data dump, or when hovering on links in the
+# government UI.
+id = 13013014
+
+[[profiles.marseille.stations]]
+name = "Bar"
+id = 13008019

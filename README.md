@@ -5,6 +5,7 @@ The dataset is provided [by the government](https://www.prix-carburants.gouv.fr/
 
 This repository contains a library ([fioul](./fioul)) to fetch and/or parse the data into memory.
 It also provides a server ([fioul-server](./server)) to provide the data in an easier format.
+A CLI tool ([fioul-cli](./cli)) is provided to query the server easily.
 
 ## Server
 
@@ -46,3 +47,15 @@ There are a number of query parameters that can be supplied:
   Those are excluded from a `location` search by default, but if this parameter is true they will be
   included.
 - `ids`: Comma separated list of integer ids of stations, allows to query only specific stations.
+
+## CLI
+
+The CLI can query a fioul server for information. It can also use [nominatim](https://nominatim.org/) 
+to fetch extra information.
+
+It is recommended to use a self-hosted nominatim instance, as doing `fioul near` can generate a
+lot of queries, that will not be compliant with nominatim usage requirements (even if they are
+cached once done).
+
+The CLI can be configured by placing a file in `~/.config/fioul/config.toml`.
+An [example configuration](./config.toml) is provided, with all the possible options.
