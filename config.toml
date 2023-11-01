@@ -15,6 +15,10 @@ distance = 5.0
 # URL to a nominatim server. It is _not_ suggested to use upstream, because while caching is
 # performed by the CLI, to populate the cache a large number of queries will be performed
 nominatim = "https://localhost:8088"
+# Duration for which to cache location information. Defaults to 1 month.
+# For more information on the format of the field see:
+# https://docs.rs/humantime/latest/humantime/fn.parse_duration.html
+cache_duration = "1month"
 
 # Section to control what is displayed when showing gas stations
 [display]

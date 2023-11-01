@@ -6,8 +6,10 @@ use std::{
     num::NonZeroUsize,
     path::{Path, PathBuf},
     str::FromStr,
+    time::Duration,
 };
 
+use chrono::Utc;
 use clap::{
     builder::{PossibleValuesParser, TypedValueParser},
     Parser, Subcommand, ValueEnum,
@@ -24,8 +26,10 @@ use lru::LruCache;
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_DISTANCE: f64 = 5.0;
+// Default cached duration is one month
+const DEFAULT_CACHE_DURATION: Duration = Duration::from_secs(60 * 60 * 24 * 30);
 
-const CACHE_VERSION: u64 = 1;
+const CACHE_VERSION: u64 = 2;
 const LRU_CAPACITY: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(1024) };
 
 #[derive(Serialize, Deserialize)]
@@ -33,6 +37,8 @@ struct GeoInfo {
     display_name: String,
     lat: f64,
     lon: f64,
+
+    expires: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -45,6 +51,7 @@ struct GeoCache {
     path: Option<PathBuf>,
     nominatim: Option<String>,
     cache: LruCache<CacheKey, GeoInfo>,
+    duration: Duration,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -60,14 +67,14 @@ struct OsmInfo {
     lon: String,
 }
 
-impl TryFrom<OsmInfo> for GeoInfo {
-    type Error = color_eyre::Report;
-
-    fn try_from(value: OsmInfo) -> Result<Self, Self::Error> {
+impl GeoInfo {
+    fn from_osm(osm: OsmInfo, duration: Duration) -> color_eyre::Result<Self> {
         Ok(Self {
-            display_name: value.display_name,
-            lat: value.lat.parse()?,
-            lon: value.lon.parse()?,
+            display_name: osm.display_name,
+            lat: osm.lat.parse()?,
+            lon: osm.lon.parse()?,
+
+            expires: chrono::Utc::now() + duration,
         })
     }
 }
@@ -97,7 +104,7 @@ impl GeoCache {
                             }
                         };
 
-                        response.try_into()
+                        GeoInfo::from_osm(response, self.duration)
                     })
             })
             .transpose()
@@ -125,7 +132,7 @@ impl GeoCache {
 
                     match response.into_iter().next() {
                         None => color_eyre::eyre::bail!("Query '{query}' returned no results"),
-                        Some(v) => v.try_into(),
+                        Some(v) => GeoInfo::from_osm(v, self.duration),
                     }
                 }),
             None => color_eyre::eyre::bail!(
@@ -134,23 +141,29 @@ impl GeoCache {
         }
     }
 
-    fn non_backed(nominatim: Option<String>) -> Self {
+    fn non_backed(nominatim: Option<String>, duration: Duration) -> Self {
         Self {
             nominatim,
             path: None,
             cache: LruCache::new(LRU_CAPACITY),
+            duration,
         }
     }
 
-    fn empty(from: &Path, nominatim: Option<String>) -> Self {
+    fn empty(from: &Path, nominatim: Option<String>, duration: Duration) -> Self {
         Self {
             nominatim,
             path: Some(from.into()),
             cache: LruCache::new(LRU_CAPACITY),
+            duration,
         }
     }
 
-    fn load(from: &Path, nominatim: Option<String>) -> color_eyre::Result<Self> {
+    fn load(
+        from: &Path,
+        nominatim: Option<String>,
+        duration: Duration,
+    ) -> color_eyre::Result<Self> {
         let data: ciborium::Value = ciborium::from_reader(File::open(from)?)?;
         let map = data
             .as_map()
@@ -174,7 +187,12 @@ impl GeoCache {
 
         let mut cache = LruCache::new(LRU_CAPACITY);
 
-        for (id, info) in data.info.into_iter().rev() {
+        for (id, info) in data
+            .info
+            .into_iter()
+            .rev()
+            .filter(|(_, i)| i.expires > Utc::now())
+        {
             cache.put(id, info);
         }
 
@@ -182,6 +200,7 @@ impl GeoCache {
             nominatim,
             path: Some(from.into()),
             cache,
+            duration,
         })
     }
 
@@ -344,10 +363,17 @@ struct Profile {
 
 #[derive(Serialize, Deserialize, Default, Debug)]
 struct DefaultValueConfig {
+    #[serde(default)]
     server: Option<String>,
+    #[serde(default)]
     location: Option<Location>,
+    #[serde(default)]
     distance: Option<f64>,
+    #[serde(default)]
     nominatim: Option<String>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    cache_duration: Option<Duration>,
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]
@@ -617,7 +643,10 @@ fn main() -> color_eyre::Result<()> {
     let project_dir = ProjectDirs::from("net", "traxys", "fioul");
 
     let (config, mut cache) = match &project_dir {
-        None => (Config::default(), GeoCache::non_backed(args.nominatim)),
+        None => (
+            Config::default(),
+            GeoCache::non_backed(args.nominatim, DEFAULT_CACHE_DURATION),
+        ),
         Some(p) => {
             let config_path = p.config_dir();
             std::fs::create_dir_all(config_path).wrap_err("could not create config directory")?;
@@ -630,13 +659,17 @@ fn main() -> color_eyre::Result<()> {
             let config: Config = toml::from_str(&config)?;
 
             let nominatim = config.default.nominatim.clone().or(args.nominatim);
+            let duration = config
+                .default
+                .cache_duration
+                .unwrap_or(DEFAULT_CACHE_DURATION);
 
             std::fs::create_dir_all(p.cache_dir()).wrap_err("could not create cache directory")?;
 
             let cache_path = p.cache_dir().join("geo.cbor");
             let cache = match cache_path.exists() {
-                true => GeoCache::load(&cache_path, nominatim)?,
-                false => GeoCache::empty(&cache_path, nominatim),
+                true => GeoCache::load(&cache_path, nominatim, duration)?,
+                false => GeoCache::empty(&cache_path, nominatim, duration),
             };
 
             (config, cache)
