@@ -59,3 +59,15 @@ cached once done).
 
 The CLI can be configured by placing a file in `~/.config/fioul/config.toml`.
 An [example configuration](./config.toml) is provided, with all the possible options.
+
+## Grafana Dashboard
+
+It's quite easy to integrate fioul with grafana to display prices for a fuel in a bar gauge.
+
+A JSON API data source can be setup, pointing to `http://<server/api/stations`. Then a bar gauge
+can be created with one query containing two JSONPath fields:
+- `$.stations[*].id`
+- `$.stations[*].prices.<fuel>[*].price`
+
+Then a transform `Rows to fields` needs to be added, setting `id` as the Field name and `price` as the field value.
+Labels can be added by overriding the display name of the ids
