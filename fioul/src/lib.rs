@@ -381,7 +381,7 @@ pub enum RoadKind {
 pub struct Location {
     pub road: RoadKind,
     pub zip_code: String,
-    pub address: String,
+    pub address: Option<String>,
     pub city: Option<String>,
     pub coordinates: Option<Coordinates>,
 }
@@ -576,13 +576,6 @@ impl Parser {
     where
         P: Fn() -> String + Copy,
     {
-        let unwrap = |opt: Option<_>, child: &str| {
-            opt.ok_or_else(|| Error::MissingNode {
-                path: path(),
-                node: child.into(),
-            })
-        };
-
         let opt_f64 = |attr| {
             attribute_mapped(node, attr, path, |v, path| match v {
                 "" => Ok(None),
@@ -613,7 +606,7 @@ impl Parser {
 
         Ok(Location {
             city,
-            address: unwrap(address, "adresse")?,
+            address,
             zip_code: attribute(node, "cp", path)?,
             coordinates,
             road,
@@ -675,7 +668,13 @@ impl Parser {
 
             for child in station.children().filter(|n| n.is_element()) {
                 match child.tag_name().name() {
-                    "adresse" => address = Some(value(child, || path() + ".adresse")?),
+                    "adresse" => {
+                        address = match value(child, || path() + ".adresse") {
+                            Ok(v) => Some(v),
+                            Err(Error::MissingValue(_)) => None,
+                            Err(e) => return Err(e),
+                        }
+                    }
                     "ville" => {
                         city = match value(child, || path() + ".ville") {
                             Ok(v) => Some(v),

@@ -458,7 +458,7 @@ fn print_stations(
         println!(
             "== {} - {} ({})",
             station.location.city.as_deref().unwrap_or(""),
-            station.location.address,
+            station.location.address.as_deref().unwrap_or(""),
             station.location.zip_code,
         );
         if let Some(info) = geo_info {
