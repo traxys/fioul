@@ -14,6 +14,7 @@
 //!
 
 use std::{
+    cmp::Ordering,
     fs::File,
     io::{Cursor, Read, Seek},
     num::{ParseFloatError, ParseIntError},
@@ -180,7 +181,7 @@ fn time_of_day_attr(
 /// Tries to represent a single date, but as France uses daylight saving time
 /// dates between 2 and 3 in the morning on the day the clock moves back are ambiguous.
 /// This type contains either the single non-ambiguous date, or both possible dates.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DateTime {
     Single(chrono::DateTime<Utc>),
@@ -193,6 +194,44 @@ impl std::fmt::Display for DateTime {
             DateTime::Single(d) => write!(f, "{d}"),
             DateTime::Ambiguous(a, b) => write!(f, "{a} or {b}"),
         }
+    }
+}
+
+/// Consider ambiguous datetimes equal if one of the date matches
+impl PartialEq for DateTime {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Single(l0), Self::Single(r0)) => l0 == r0,
+            (Self::Single(l0), Self::Ambiguous(r0, r1)) => l0 == r0 || l0 == r1,
+            (Self::Ambiguous(l0, l1), Self::Single(r0)) => l0 == r0 || l1 == r0,
+            (Self::Ambiguous(l0, l1), Self::Ambiguous(r0, r1)) => {
+                l0 == r0 || l0 == r1 || l1 == r1
+            }
+        }
+    }
+}
+
+impl Ord for DateTime {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (DateTime::Single(s), DateTime::Single(o))
+            // Too much ambiguity, choose one
+            | (DateTime::Ambiguous(s, _), DateTime::Ambiguous(o, _)) => s.cmp(o),
+            (DateTime::Single(s), DateTime::Ambiguous(o1, o2)) => match (s.cmp(o1), s.cmp(o2)) {
+                (a, b) if a == b => a,
+                (a, _) => a, // Ambiguous comparison, choose one
+            },
+            (DateTime::Ambiguous(s1, s2), DateTime::Single(o)) => match (s1.cmp(o), s2.cmp(o)) {
+                (a, b) if a == b => a,
+                (a, _) => a, // Ambiguous comparison, choose one
+            },
+        }
+    }
+}
+
+impl PartialOrd for DateTime {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
