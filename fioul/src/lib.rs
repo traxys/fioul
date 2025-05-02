@@ -822,7 +822,7 @@ impl Parser {
     /// Fetch the data for a single archived day. Only the last 30 days are available.
     pub async fn fetch_archived_day(&self, year: u16, month: u8, day: u8) -> Parsed {
         self.fetch(
-            &format!("https://donnees.roulez-eco.fr/opendata/jour/{year}{month:2}{day:2}"),
+            &format!("https://donnees.roulez-eco.fr/opendata/jour/{year}{month:0>2}{day:0>2}"),
             Some(DateFormat::TSeparated),
         )
         .await
