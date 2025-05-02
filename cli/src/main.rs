@@ -248,6 +248,13 @@ struct Args {
     )]
     nominatim: Option<String>,
     #[arg(
+        short = 'D',
+        long,
+        help = "Disable the use of nominatim",
+        global = true
+    )]
+    disable_nominatim: bool,
+    #[arg(
         short,
         long,
         help = "Fuel to sort with if --sort=price", 
@@ -663,7 +670,11 @@ fn main() -> color_eyre::Result<()> {
                 Config::default()
             };
 
-            let nominatim = config.default.nominatim.clone().or(args.nominatim);
+            let nominatim = if args.disable_nominatim {
+                None
+            } else {
+                config.default.nominatim.clone().or(args.nominatim)
+            };
             let duration = config
                 .default
                 .cache_duration
