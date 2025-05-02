@@ -16,7 +16,7 @@ use axum::{
 use fioul::{Coordinates, Station};
 use fioul_types::{Response, Stations};
 use fnv::FnvHashSet;
-use geo::{GeodesicDistance, Point};
+use geo::{Distance, Geodesic, Point};
 use itertools::Itertools;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::sync::{
@@ -128,7 +128,6 @@ where
 
 struct QueryJE<T>(T);
 
-#[axum::async_trait]
 impl<T, S> FromRequestParts<S> for QueryJE<T>
 where
     T: DeserializeOwned,
@@ -267,9 +266,10 @@ async fn stations(
                 latitude,
                 longitude,
             }) => {
-                requested_point
-                    .geodesic_distance(&Point::new(latitude / 100000., longitude / 100000.))
-                    <= location.distance
+                Geodesic.distance(
+                    requested_point,
+                    Point::new(latitude / 100000., longitude / 100000.),
+                ) <= location.distance
             }
         });
     }
@@ -596,10 +596,8 @@ async fn main() -> Result<(), String> {
     tracing::info!("Listening on 0.0.0.0:{}", config.port);
 
     let addr = SocketAddr::new("0.0.0.0".parse().unwrap(), config.port);
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await
-        .unwrap();
+    let listner = tokio::net::TcpListener::bind(addr).await.unwrap();
+    axum::serve(listner, app).await.unwrap();
 
     Ok(())
 }

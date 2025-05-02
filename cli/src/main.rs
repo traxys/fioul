@@ -20,7 +20,7 @@ use fioul_types::{
     fioul::{self, Fuel, Price, Station},
     Stations,
 };
-use geo::{GeodesicDistance, Point};
+use geo::{Distance, Geodesic, Point};
 use itertools::Itertools;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
@@ -30,7 +30,7 @@ const DEFAULT_DISTANCE: f64 = 5.0;
 const DEFAULT_CACHE_DURATION: Duration = Duration::from_secs(60 * 60 * 24 * 30);
 
 const CACHE_VERSION: u64 = 2;
-const LRU_CAPACITY: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(1024) };
+const LRU_CAPACITY: NonZeroUsize = NonZeroUsize::new(1024).unwrap();
 
 #[derive(Serialize, Deserialize)]
 struct GeoInfo {
@@ -91,10 +91,11 @@ impl GeoCache {
                     .try_get_or_insert(CacheKey::Station(station.id), || {
                         let response = ureq::get(&format!("{url}/reverse"))
                             .query("format", "json")
-                            .query("lat", &(coords.latitude / 100000.).to_string())
-                            .query("lon", &(coords.longitude / 100000.).to_string())
+                            .query("lat", (coords.latitude / 100000.).to_string())
+                            .query("lon", (coords.longitude / 100000.).to_string())
                             .call()?
-                            .into_string()?;
+                            .body_mut()
+                            .read_to_string()?;
 
                         let response: OsmInfo = match serde_json::from_str(&response) {
                             Ok(v) => v,
@@ -120,7 +121,8 @@ impl GeoCache {
                         .query("limit", "1")
                         .query("countrycodes", "fr")
                         .call()?
-                        .into_string()?;
+                        .body_mut()
+                        .read_to_string()?;
 
                     let response: Vec<OsmInfo> = match serde_json::from_str(&response) {
                         Ok(v) => v,
@@ -407,35 +409,39 @@ fn get_stations<'a, P>(url: &str, queries: P) -> color_eyre::Result<Vec<Station>
 where
     P: IntoIterator<Item = (&'a str, &'a str)>,
 {
-    let response = ureq::get(&format!("{url}/api/stations"))
+    let mut response = ureq::get(&format!("{url}/api/stations"))
+        .config()
+        .http_status_as_error(false)
+        .build()
         .query_pairs(queries)
-        .call();
+        .call()?;
 
-    let stations: fioul_types::Response<Stations> = match response {
-        Ok(v) => v.into_json()?,
-        Err(e) => match e {
-            t @ ureq::Error::Transport { .. } => return Err(t.into()),
-            ureq::Error::Status(code, rsp) => {
-                let err_rsp = rsp.into_json::<fioul_types::Response<Void>>();
+    if !response.status().is_success() {
+        let err_rsp = response
+            .body_mut()
+            .read_json::<fioul_types::Response<Void>>();
 
-                match err_rsp {
-                    Ok(v) => match v {
-                        fioul_types::Response::Error { code: _, message } => {
-                            color_eyre::eyre::bail!("Error: {message}")
-                        }
-                        _ => unreachable!(),
-                    },
-                    Err(_) => color_eyre::eyre::bail!(
-                        "Server returned status code {code}, and no response"
-                    ),
+        match err_rsp {
+            Ok(v) => match v {
+                fioul_types::Response::Error { code: _, message } => {
+                    color_eyre::eyre::bail!("Error: {message}")
                 }
+                _ => unreachable!(),
+            },
+            Err(_) => {
+                color_eyre::eyre::bail!(
+                    "Server returned status code {}, and no response",
+                    response.status()
+                )
             }
-        },
-    };
+        }
+    } else {
+        let stations: fioul_types::Response<Stations> = response.body_mut().read_json()?;
 
-    match stations {
-        fioul_types::Response::Error { .. } => unreachable!(),
-        fioul_types::Response::Ok(v) => Ok(v.stations),
+        match stations {
+            fioul_types::Response::Error { .. } => unreachable!(),
+            fioul_types::Response::Ok(v) => Ok(v.stations),
+        }
     }
 }
 
@@ -522,16 +528,20 @@ impl Sort {
                     }
                 });
             }
-            Sort::Distance(from) => stations.sort_unstable_by(|a, b| {
+            &Sort::Distance(from) => stations.sort_unstable_by(|a, b| {
                 match (a.location.coordinates, b.location.coordinates) {
                     (None, None) => Ordering::Equal,
                     (Some(_), None) => Ordering::Less,
                     (None, Some(_)) => Ordering::Greater,
                     (Some(a), Some(b)) => {
-                        let a = Point::new(a.latitude / 100000., a.longitude / 100000.)
-                            .geodesic_distance(from);
-                        let b = Point::new(b.latitude / 100000., b.longitude / 100000.)
-                            .geodesic_distance(from);
+                        let a = Geodesic.distance(
+                            from,
+                            Point::new(a.latitude / 100000., a.longitude / 100000.),
+                        );
+                        let b = Geodesic.distance(
+                            from,
+                            Point::new(b.latitude / 100000., b.longitude / 100000.),
+                        );
 
                         a.partial_cmp(&b).expect("distances should be numbers")
                     }
