@@ -7,14 +7,14 @@ use std::{
 };
 
 use axum::{
-    extract::{rejection::QueryRejection, FromRequestParts, Query},
+    extract::{rejection::QueryRejection, FromRequestParts, Path, Query},
     http::{request::Parts, Method, StatusCode},
     response::IntoResponse,
     routing::get,
     Json, Router,
 };
-use fioul::{Coordinates, Station};
-use fioul_types::{Response, Stations};
+use fioul::{Coordinates, Fuel, Station};
+use fioul_types::{FuelList, Response, Stations};
 use fnv::FnvHashSet;
 use geo::{Distance, Geodesic, Point};
 use itertools::Itertools;
@@ -275,6 +275,22 @@ async fn stations(
     }
 
     Ok(Stations { stations }.into())
+}
+
+async fn by_fuel(
+    state: AppState,
+    params: Query<QueryParams>,
+    Path(fuel): Path<Fuel>,
+) -> Result<OkResponse<FuelList>, Error> {
+    let info = stations(state, params).await?.0.stations;
+
+    Ok(FuelList {
+        result: info
+            .into_iter()
+            .map(|mut i| (i.id, std::mem::take(&mut i.prices[fuel])))
+            .collect(),
+    }
+    .into())
 }
 
 struct DataEntry {
@@ -588,6 +604,7 @@ async fn main() -> Result<(), String> {
 
     let app = Router::new()
         .route("/api/stations", get(stations))
+        .route("/api/stations/{fuel_kind}", get(by_fuel))
         .route("/status", get(status))
         .with_state(state)
         .layer(TraceLayer::new_for_http())

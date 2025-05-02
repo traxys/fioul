@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 pub use fioul;
-use fioul::Station;
+use fioul::{Price, Station};
 
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "status")]
@@ -16,3 +18,7 @@ pub struct Stations {
     pub stations: Vec<Station>,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct FuelList {
+    pub result: HashMap<u64, Vec<Price>>,
+}
