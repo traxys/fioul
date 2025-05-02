@@ -14,7 +14,7 @@ use axum::{
     Json, Router,
 };
 use fioul::{Coordinates, Fuel, Station};
-use fioul_types::{FuelList, Response, Stations};
+use fioul_types::{CurrentFuelList, FuelList, Response, Stations};
 use fnv::FnvHashSet;
 use geo::{Distance, Geodesic, Point};
 use itertools::Itertools;
@@ -288,6 +288,25 @@ async fn by_fuel(
         result: info
             .into_iter()
             .map(|mut i| (i.id, std::mem::take(&mut i.prices[fuel])))
+            .collect(),
+    }
+    .into())
+}
+
+async fn current_fuel(
+    state: AppState,
+    params: Query<QueryParams>,
+    fuel: Path<Fuel>,
+) -> Result<OkResponse<CurrentFuelList>, Error> {
+    let info = by_fuel(state, params, fuel).await?.0.result;
+
+    Ok(CurrentFuelList {
+        result: info
+            .into_iter()
+            .map(|(id, mut prices)| {
+                prices.sort_unstable_by_key(|p| p.updated_at);
+                (id, prices.last().map(|p| p.price))
+            })
             .collect(),
     }
     .into())
@@ -605,6 +624,7 @@ async fn main() -> Result<(), String> {
     let app = Router::new()
         .route("/api/stations", get(stations))
         .route("/api/stations/{fuel_kind}", get(by_fuel))
+        .route("/api/stations/{fuel_kind}/current", get(current_fuel))
         .route("/status", get(status))
         .with_state(state)
         .layer(TraceLayer::new_for_http())

@@ -22,3 +22,8 @@ pub struct Stations {
 pub struct FuelList {
     pub result: HashMap<u64, Vec<Price>>,
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct CurrentFuelList {
+    pub result: HashMap<u64, Option<f64>>,
+}
