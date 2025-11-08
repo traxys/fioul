@@ -11,7 +11,7 @@ with lib; {
 
       package = mkOption {
         type = types.package;
-        default = self.packages."${pkgs.system}".fioul-server;
+        default = self.packages."${pkgs.stdenv.hostPlatform.system}".fioul-server;
       };
 
       port = mkOption {

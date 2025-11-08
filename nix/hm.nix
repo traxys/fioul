@@ -39,7 +39,7 @@ in {
   };
 
   config = mkIf cfg.enable {
-    home.packages = [self.packages."${pkgs.system}".fioul];
+    home.packages = [self.packages."${pkgs.stdenv.hostPlatform.system}".fioul];
 
     home.file."${configDir}/fioul/config.toml" = mkIf (cfg.settings != {}) {
       source = tomlFormat.generate "fioul-config" cfg.settings;
